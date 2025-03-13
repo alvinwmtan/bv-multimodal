@@ -1,0 +1,26 @@
+img_dir: ''
+wandb_name: base_dim256_bv_mlm2
+ds_file: manifest_bv.csv
+devices: [4,1,2,3]
+pretrained: False
+batch_size: 8
+accumulate_grad_batches: 4
+
+model_config:
+  projection_dim: 256
+  logit_scale_init_value: 1.0
+  contrastive_temp: 0.07
+  dino_teacher_temp: 0.07
+  dino_student_temp: 0.1
+  dino_center_momentum: 0.9
+  dino_teacher_momentum: 0.996
+  lr: 
+    main: 5e-5
+    vision: ${model_config.lr.main}
+    text: ${model_config.lr.main}
+    projection: 5e-4
+  dino_weight: 1.0
+  # ntp_weight: 1.0
+  mlm_weight: 1.0
+  contrastive_weight: 1.0
+  freeze: ${pretrained}
