@@ -1,7 +1,7 @@
 img_dir: ''
-wandb_name: base_dim256_bv_mlm2
-ds_file: manifest_bv.csv
-devices: [4,1,2,3]
+wandb_name: base_dim256_sc_mlm4
+ds_file: manifest_sc.csv # manifest_bv.csv
+devices: [0,1,2,3]
 pretrained: False
 batch_size: 8
 accumulate_grad_batches: 4
@@ -20,7 +20,8 @@ model_config:
     text: ${model_config.lr.main}
     projection: 5e-4
   dino_weight: 1.0
-  # ntp_weight: 1.0
-  mlm_weight: 1.0
+  text_loss_type: 'mlm'
+  text_loss_weight: 1.0
   contrastive_weight: 1.0
   freeze: ${pretrained}
+  use_memory_bank: False

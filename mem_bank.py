@@ -48,7 +48,7 @@ class MemoryBankContrastive(nn.Module):
             labels
         )
         loss_txt = F.cross_entropy(
-            torch.cat([logits_per_txt_batch, logits_per_txt_memory.t()], dim=1), 
+            torch.cat([logits_per_txt_batch, logits_per_txt_memory], dim=1), 
             labels
         )
         

@@ -3,16 +3,27 @@ import pandas as pd
 from PIL import Image
 import torch
 from torch.utils.data import Dataset
+from torchvision import transforms
 from transformers import DataCollatorForLanguageModeling
 
+centre_crop = transforms.Compose([
+    transforms.Resize(256),
+    transforms.CenterCrop(224),
+    transforms.ToTensor()
+])
+
 class HeadcamDataset(Dataset):
-    def __init__(self, csv_file, img_dir, transform=None, tokenizer=None, split='train', mlm_probability=0.3):
+    def __init__(self, csv_file, img_dir, transform=None, image_preprocess=centre_crop, 
+                 tokenizer=None, text_loss_type='mlm', split='train', mlm_probability=0.3):
         self.data = pd.read_csv(csv_file)
         self.data = self.data[self.data['split'] == split]
         self.img_dir = img_dir
         self.transform = transform
+        self.image_preprocess = image_preprocess
         self.tokenizer = tokenizer
+        self.text_loss_type = text_loss_type
         self.mlm_probability = mlm_probability
+        self.max_length = 512  # Default max length for text
 
     def __len__(self):
         return len(self.data)
@@ -22,42 +33,50 @@ class HeadcamDataset(Dataset):
         image = Image.open(img_name).convert('RGB')
         text = self.data.iloc[idx]['text']
 
+        if self.image_preprocess:
+            image = self.image_preprocess(image)
+
         if self.transform:
-            image = self.transform(image, return_tensors='pt')['pixel_values'].squeeze(0)
+            image = self.transform(image, return_tensors='pt', do_rescale=not self.image_preprocess)['pixel_values'].squeeze(0)
+
+        # Initialize default tensors
+        input_ids = torch.zeros(self.max_length, dtype=torch.long)
+        attention_mask = torch.zeros(self.max_length, dtype=torch.long)
+        special_tokens_mask = torch.zeros(self.max_length, dtype=torch.long)
+        next_token_labels = torch.zeros(self.max_length, dtype=torch.long)
+        labels = torch.zeros(self.max_length, dtype=torch.long)
+        masked_input_ids = torch.zeros(self.max_length, dtype=torch.long)
 
         if self.tokenizer:
+            if not isinstance(text, str): # some nan in text; restoring as space
+                text = " "
             text_tokens = self.tokenizer(text, padding='max_length', truncation=True, 
                                          return_special_tokens_mask=True, return_tensors='pt')
             input_ids = text_tokens['input_ids'].squeeze(0)
             attention_mask = text_tokens['attention_mask'].squeeze(0)
             special_tokens_mask = text_tokens['special_tokens_mask'].squeeze(0)
 
-            # ## NTP loss
-            # # if input_ids.size(0) == 0:
-            # #     input_ids = None
-            # #     attention_mask = None
-            # #     next_token_labels = None
-            # # else:
-            # next_token_labels = input_ids.clone()
-            # next_token_labels[:-1] = input_ids[1:]
-            # next_token_labels[-1] = self.tokenizer.eos_token_id
+            if self.text_loss_type == 'ntp':
+                next_token_labels = input_ids.clone()
+                next_token_labels[:-1] = input_ids[1:]
+                next_token_labels[-1] = self.tokenizer.eos_token_id
 
-            ## MLM loss
-            labels = input_ids.clone()
-            probability_matrix = torch.full(labels.shape, self.mlm_probability)
-            probability_matrix = probability_matrix * attention_mask.bool()
-            probability_matrix = probability_matrix * (1-special_tokens_mask).bool()
-            masked_indices = torch.bernoulli(probability_matrix).bool()
-            labels[~masked_indices] = -100  # only compute loss on masked tokens
-            masked_input_ids = input_ids.clone()
-            masked_input_ids[masked_indices] = self.tokenizer.mask_token_id
+            if self.text_loss_type == 'mlm':
+                labels = input_ids.clone()
+                probability_matrix = torch.full(labels.shape, self.mlm_probability)
+                probability_matrix = probability_matrix * attention_mask.bool()
+                probability_matrix = probability_matrix * (1-special_tokens_mask).bool()
+                masked_indices = torch.bernoulli(probability_matrix).bool()
+                labels[~masked_indices] = -100  # only compute loss on masked tokens
+                masked_input_ids = input_ids.clone()
+                masked_input_ids[masked_indices] = self.tokenizer.mask_token_id
 
         return {
             'pixel_values': image,
             'input_ids': input_ids,
             'attention_mask': attention_mask,
             'special_tokens_mask': special_tokens_mask,
-            # 'next_token_labels': next_token_labels
+            'next_token_labels': next_token_labels,
             'labels': labels,
             'masked_input_ids': masked_input_ids
         }
