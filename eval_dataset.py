@@ -5,6 +5,7 @@ import torch
 from torch.utils.data import Dataset
 from torchvision import transforms
 
+# Center crop transform for evaluation (always deterministic)
 centre_crop = transforms.Compose([
     transforms.Resize(256),
     transforms.CenterCrop(224),
@@ -18,7 +19,7 @@ class EvalDataset(Dataset):
             csv_file (str): Path to the CSV manifest file with columns for images and texts
             img_dir (str): Directory containing the images
             transform: Optional transform to be applied to the image (e.g., CLIP preprocessor)
-            image_preprocess: Basic image preprocessing pipeline (default: centre_crop)
+            image_preprocess: Basic image preprocessing pipeline (default: centre_crop for evaluation)
             tokenizer: Tokenizer for processing text
         """
         self.data = pd.read_csv(csv_file)

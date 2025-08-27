@@ -6,20 +6,38 @@ from torch.utils.data import Dataset
 from torchvision import transforms
 from transformers import DataCollatorForLanguageModeling
 
+# Center crop transform for validation and test
 centre_crop = transforms.Compose([
     transforms.Resize(256),
     transforms.CenterCrop(224),
     transforms.ToTensor()
 ])
 
+# Training augmentation transform
+train_augment = transforms.Compose([
+    transforms.RandomResizedCrop(224, scale=(0.1, 1.0), ratio=(1.0, 1.0)),  # Random square crop with resize
+    transforms.RandomHorizontalFlip(p=0.5),  # 50% chance of horizontal flip
+    transforms.ToTensor()
+])
+
 class HeadcamDataset(Dataset):
-    def __init__(self, csv_file, img_dir, transform=None, image_preprocess=centre_crop, 
+    def __init__(self, csv_file, img_dir, transform=None, image_preprocess=None, 
                  tokenizer=None, text_loss_type='mlm', split='train', mlm_probability=0.3):
         self.data = pd.read_csv(csv_file)
         self.data = self.data[self.data['split'] == split]
         self.img_dir = img_dir
         self.transform = transform
-        self.image_preprocess = image_preprocess
+        self.split = split
+        
+        # Set image preprocessing based on split
+        if image_preprocess is not None:
+            self.image_preprocess = image_preprocess
+        else:
+            if split == 'train':
+                self.image_preprocess = train_augment
+            else:
+                self.image_preprocess = centre_crop
+        
         self.tokenizer = tokenizer
         self.text_loss_type = text_loss_type
         self.mlm_probability = mlm_probability
@@ -33,8 +51,13 @@ class HeadcamDataset(Dataset):
         image = Image.open(img_name).convert('RGB')
         text = self.data.iloc[idx]['text']
 
+        # Apply appropriate preprocessing based on split
         if self.image_preprocess:
+            # Use the specified preprocessing (augmentation for train, center crop for val/test)
             image = self.image_preprocess(image)
+        else:
+            # Fallback to center crop if no preprocessing specified
+            image = centre_crop(image)
 
         if self.transform:
             image = self.transform(image, return_tensors='pt', do_rescale=not self.image_preprocess)['pixel_values'].squeeze(0)
