@@ -24,4 +24,3 @@ model_config:
   text_loss_weight: 1.0
   contrastive_weight: 1.0
   freeze: ${pretrained}
-  use_memory_bank: False

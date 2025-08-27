@@ -9,8 +9,6 @@ from torch.optim import AdamW
 
 import lightning as L
 
-from mem_bank import MemoryBankContrastive
-
 ### LOSSES ################################
 # contrastive loss definition
 class ContrastiveLoss(nn.Module):
@@ -56,11 +54,6 @@ class MultimodalModel(L.LightningModule):
         self.vision_model = vision_encoder
         self.text_model = text_encoder
         
-        # Add embedding type configuration
-        self.embedding_type = config.get('embedding_type', 'flat')  # 'flat' or 'spatial'
-        self.sim_type = config.get('sim_type', 'max')  # 'mean' or 'max'
-        self.normalize_features = config.get('normalize_features', False)
-        
         # Projection layers
         self.visual_projection = nn.Linear(vision_encoder.config.hidden_size, self.config['projection_dim'])
         self.text_projection = nn.Linear(text_encoder.config.hidden_size, self.config['projection_dim'])
@@ -80,10 +73,7 @@ class MultimodalModel(L.LightningModule):
             
         self.text_loss_fn = nn.CrossEntropyLoss(ignore_index=-100)
         
-        if self.config['use_memory_bank']:
-            self.contrastive_loss_fn = MemoryBankContrastive(dim=self.config['projection_dim'], temp=self.config['contrastive_temp'])
-        else:
-            self.contrastive_loss_fn = ContrastiveLoss(temp=self.config['contrastive_temp'])
+        self.contrastive_loss_fn = ContrastiveLoss(temp=self.config['contrastive_temp'])
         self.dino_loss_fn = DINOLoss(
             out_dim=self.config['projection_dim'],
             teacher_temp=self.config['dino_teacher_temp'],
@@ -113,39 +103,19 @@ class MultimodalModel(L.LightningModule):
 
     def forward(self, input_ids, pixel_values, attention_mask=None, position_ids=None):
         text_embeds = self.get_text_features(input_ids, attention_mask)
-        image_embeds, image_feature_map = self.get_image_features(pixel_values)
+        image_embeds = self.get_image_features(pixel_values)
         
-        if self.normalize_features:
-            text_embeds = F.normalize(text_embeds, p=2, dim=-1)
-            image_embeds = F.normalize(image_embeds, p=2, dim=-1)
-        
-        if self.embedding_type == "flat":
-            # Calculate match similarity for flat embeddings
-            match = image_embeds @ text_embeds.T
-            logit_scale = torch.clamp(self.logit_scale.exp(), max=100.0)
-            logits_per_image = match * logit_scale
-            logits_per_text = match.t() * logit_scale
-            
-        elif self.embedding_type == "spatial":
-            # Calculate match similarity for spatial embeddings
-            if self.sim_type == "mean":
-                match_sum = torch.einsum('iehw,tle->it', [image_feature_map, text_embeds])
-                match = match_sum / (image_feature_map.size(-2) * image_feature_map.size(-1) * attention_mask.sum(dim=1))
-            elif self.sim_type == "max":
-                match_max = torch.einsum('iehw,tle->itlhw', [image_feature_map, text_embeds])
-                match_max = torch.amax(match_max, dim=(3, 4))
-                match = torch.sum(match_max, dim=2) / attention_mask.sum(dim=1)
-            
-            logit_scale = torch.clamp(self.logit_scale.exp(), max=100.0)
-            logits_per_image = match * logit_scale
-            logits_per_text = match.t() * logit_scale
+        # Calculate match similarity for flat embeddings
+        match = image_embeds @ text_embeds.T
+        logit_scale = torch.clamp(self.logit_scale.exp(), max=100.0)
+        logits_per_image = match * logit_scale
+        logits_per_text = match.t() * logit_scale
         
         return {
             "logits_per_image": logits_per_image,
             "logits_per_text": logits_per_text,
             "text_embeds": text_embeds,
-            "image_embeds": image_embeds,
-            "image_feature_map": image_feature_map
+            "image_embeds": image_embeds
         }
     
     def get_text_features(self, input_ids, attention_mask=None):
@@ -173,12 +143,7 @@ class MultimodalModel(L.LightningModule):
         pooled_output = outputs.pooler_output
         image_embeds = self.visual_projection(pooled_output)
         
-        # Get feature map if available
-        image_feature_map = None
-        if hasattr(outputs, 'last_hidden_state'):
-            image_feature_map = outputs.last_hidden_state
-        
-        return image_embeds, image_feature_map
+        return image_embeds
     
     def configure_optimizers(self):
         vision_params = {"params": self.vision_model.parameters(), "lr": self.config['lr']['vision']}
@@ -258,12 +223,9 @@ class MultimodalModel(L.LightningModule):
         current_contrastive_weight = self.get_scheduled_contrastive_weight()
         if (current_contrastive_weight != 0.0):
             outputs = self(input_ids=input_ids, pixel_values=pixel_values, attention_mask=attention_mask)
-            if self.config['use_memory_bank']:
-                contrastive_loss = self.contrastive_loss_fn(outputs["image_embeds"], outputs["text_embeds"])
-            else:
-                logits_per_image = outputs["logits_per_image"]
-                logits_per_text = outputs["logits_per_text"]
-                contrastive_loss = self.contrastive_loss_fn(logits_per_image, logits_per_text)
+            logits_per_image = outputs["logits_per_image"]
+            logits_per_text = outputs["logits_per_text"]
+            contrastive_loss = self.contrastive_loss_fn(logits_per_image, logits_per_text)
 
         # total loss
         total_loss = current_contrastive_weight * contrastive_loss + \
