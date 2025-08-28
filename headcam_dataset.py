@@ -103,6 +103,8 @@ class HeadcamDataset(Dataset):
             'labels': labels,
             'masked_input_ids': masked_input_ids
         }
+    
+    # TODO: visualise data examples and model preds during training
 
 # class HeadcamDataCollator(DataCollatorForLanguageModeling):
 #     def __call__(self, features):
